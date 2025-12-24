@@ -1,4 +1,4 @@
-#schema_extractor.py
+# schema_extractor.py
 
 import frappe
 
@@ -38,7 +38,7 @@ def is_query_relevant_field(fieldname, fieldtype):
 
 
 # =============================================================================
-# FIELD CLASSIFICATION (OPTIMIZATION 3)
+# FIELD CLASSIFICATION
 # =============================================================================
 
 def classify_fieldtype(fieldtype):
@@ -57,7 +57,6 @@ def classify_fieldtype(fieldtype):
 
 def is_commonly_filtered(fieldname, fieldtype):
     fname = fieldname.lower()
-
     patterns = [
         "status", "state", "enabled",
         "date", "from", "to", "posting",
@@ -65,18 +64,15 @@ def is_commonly_filtered(fieldname, fieldtype):
         "docstatus", "workflow", "name",
         "type", "category", "group",
     ]
-
     if any(p in fname for p in patterns):
         return True
-
     if fieldtype in {"Date", "Datetime", "Select"}:
         return True
-
     return False
 
 
 # =============================================================================
-# FIELD DESCRIPTION (OPTIMIZATION 4)
+# FIELD DESCRIPTION
 # =============================================================================
 
 def generate_field_description(fieldname, label, description):
@@ -84,7 +80,6 @@ def generate_field_description(fieldname, label, description):
         return description.strip()
 
     lname = fieldname.lower()
-
     if "date" in lname:
         return "Date-related field"
     if "qty" in lname or "quantity" in lname:
@@ -96,7 +91,6 @@ def generate_field_description(fieldname, label, description):
 
     if label:
         return f"{label} field"
-
     return f"{fieldname.replace('_', ' ').lower()} field"
 
 
@@ -122,8 +116,8 @@ def extract_doctype_schema(doctype: str):
             "fieldname": df.fieldname,
             "label": df.label,
             "type": df.fieldtype,
-            "class": classify_fieldtype(df.fieldtype),  # ✅ OPT 3
-            "description": generate_field_description(  # ✅ OPT 4
+            "class": classify_fieldtype(df.fieldtype),
+            "description": generate_field_description(
                 df.fieldname, df.label, df.description
             ),
             "commonly_filtered": is_commonly_filtered(df.fieldname, df.fieldtype),
@@ -134,6 +128,7 @@ def extract_doctype_schema(doctype: str):
 
         fields.append(field)
 
+        # 🔴 NEW: explicit link capture (already existed, preserved)
         if df.fieldtype == "Link" and df.options:
             links.append({
                 "fieldname": df.fieldname,
@@ -148,7 +143,7 @@ def extract_doctype_schema(doctype: str):
                 "child_doctype": df.options,
             })
 
-    # Ensure name + docstatus
+    # Ensure name
     if not any(f["fieldname"] == "name" for f in fields):
         fields.insert(0, {
             "fieldname": "name",
@@ -159,13 +154,14 @@ def extract_doctype_schema(doctype: str):
             "commonly_filtered": True,
         })
 
+    # Ensure docstatus
     if meta.is_submittable and not any(f["fieldname"] == "docstatus" for f in fields):
         fields.insert(1, {
             "fieldname": "docstatus",
             "label": "Status",
             "type": "Int",
             "class": "categorical",
-            "description": "Document status: 0 = Draft, 1 = Submitted, 2 = Cancelled",
+            "description": "Document status",
             "commonly_filtered": True,
             "options": "0=Draft,1=Submitted,2=Cancelled",
         })
@@ -180,23 +176,21 @@ def extract_doctype_schema(doctype: str):
         "child_tables": child_tables,
     }
 
-    # -------------------------------------------------------------------------
-    # EMBEDDING-READY TEXT (OPTIMIZATION 8)
-    # -------------------------------------------------------------------------
+    # 🔴 NEW: richer embedding text (append-only)
     schema["embedding_text"] = build_embedding_text(schema)
 
     return schema
 
 
 # =============================================================================
-# EMBEDDING TEXT GENERATOR (OPTIMIZATION 8)
+# EMBEDDING TEXT (EXTENDED, SAFE)
 # =============================================================================
 
 def build_embedding_text(schema: dict) -> str:
     lines = [
         f"DocType: {schema['doctype']}",
         f"Description: {schema['description']}",
-        "Fields:"
+        "Fields:",
     ]
 
     for f in schema["fields"]:
@@ -205,15 +199,21 @@ def build_embedding_text(schema: dict) -> str:
             line += f" → {f['options']}"
         lines.append(line)
 
-    if schema["child_tables"]:
+    # 🔴 NEW: relationships (for joins)
+    if schema.get("links"):
+        lines.append("Relationships:")
+        for l in schema["links"]:
+            lines.append(
+                f"- {schema['doctype']}.{l['fieldname']} → {l['linked_doctype']}"
+            )
+
+    # 🔴 NEW: child tables
+    if schema.get("child_tables"):
         lines.append("Child Tables:")
         for ct in schema["child_tables"]:
-            lines.append(f"- {ct['fieldname']} → {ct['child_doctype']}")
-
-    if schema["links"]:
-        lines.append("Links:")
-        for l in schema["links"]:
-            lines.append(f"- {l['fieldname']} → {l['linked_doctype']}")
+            lines.append(
+                f"- {schema['doctype']}.{ct['fieldname']} → {ct['child_doctype']}"
+            )
 
     return "\n".join(lines)
 

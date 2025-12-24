@@ -65,11 +65,9 @@ def rule_prefer_employee_master(intent, query):
     ):
         intent["doctype"] = "Employee"
         intent["joins"] = []
-        # normalize fields to base field
         intent["fields"] = [f.split(".")[0] for f in fields]
 
     return intent
-
 
 
 def rule_normalize_filters(intent):
@@ -103,10 +101,46 @@ def rule_clean_joins(intent):
     """
     required_joins = []
     for j in intent.get("joins", []):
-        if any(f.startswith(j.get("field", "") + ".") for f in intent["fields"]):
+        if any(
+            f.startswith(j.get("field", "") + ".")
+            for f in intent.get("fields", [])
+        ):
             required_joins.append(j)
 
     intent["joins"] = required_joins
+    return intent
+
+
+# ---------------------------------------------------------------------
+# 🆕 NEW RULE — Attendance vs Checkin Disambiguation
+# ---------------------------------------------------------------------
+
+def rule_attendance_vs_checkin(intent, query):
+    """
+    Deterministically resolve Attendance vs Employee Checkin
+    based on explicit user keywords.
+    """
+    q = query.lower()
+
+    checkin_keywords = {
+        "check in", "checked in", "check-in",
+        "check out", "checked out", "checkout"
+    }
+
+    attendance_keywords = {
+        "attendance", "absent", "present", "leave"
+    }
+
+    if any(k in q for k in checkin_keywords):
+        intent["doctype"] = "Employee Checkin"
+        intent["joins"] = []
+        return intent
+
+    if any(k in q for k in attendance_keywords):
+        intent["doctype"] = "Attendance"
+        intent["joins"] = []
+        return intent
+
     return intent
 
 
@@ -116,6 +150,7 @@ def rule_clean_joins(intent):
 
 NORMALIZATION_RULES = [
     rule_normalize_action,
+    rule_attendance_vs_checkin,      # 🆕 added early, before field logic
     rule_prefer_employee_master,
     rule_normalize_filters,
     rule_add_mandatory_filters,

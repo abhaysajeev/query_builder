@@ -22,7 +22,6 @@ def resolve_filters(intent):
 
     for f in intent.get("filters", []):
 
-        # Safety: skip invalid shapes
         if not isinstance(f, dict):
             resolved.append(f)
             continue
@@ -31,40 +30,24 @@ def resolve_filters(intent):
         op = f.get("op")
         value = f.get("value")
 
-        # --------------------------------------------------
-        # STEP 1: Resolve date literals (today, this_week)
-        # --------------------------------------------------
+        # ---------------- Date literals ----------------
         if isinstance(value, str):
             literal = resolve_date_literal(value)
             if literal:
                 op = literal[0]
                 value = literal[1:]
 
-        # --------------------------------------------------
-        # STEP 2: Coerce based on schema field type
-        # --------------------------------------------------
+        # ---------------- Type coercion ----------------
         if op == "between" and field in field_type_map:
-            field_type = field_type_map[field]
-
-            if (
-                field_type == "Date"
-                and isinstance(value, list)
-                and len(value) == 2
-            ):
+            if field_type_map[field] == "Date" and isinstance(value, list):
                 start, end = value
-
                 if isinstance(start, datetime):
                     start = start.date()
                 if isinstance(end, datetime):
                     end = end.date()
-
                 value = [start, end]
 
-        resolved.append({
-            "field": field,
-            "op": op,
-            "value": value
-        })
+        resolved.append({"field": field, "op": op, "value": value})
 
     intent["filters"] = resolved
     return intent
@@ -75,19 +58,29 @@ def resolve_filters(intent):
 # ---------------------------------------------------------------------
 
 def normalize_aggregate(intent):
-    """
-    Ensure aggregate structure exists and is valid
-    """
     if intent.get("action") != "aggregate":
         return intent
 
-    # Default aggregate fallback
-    if "aggregate" not in intent or not intent["aggregate"]:
+    if not intent.get("aggregate"):
         intent["aggregate"] = {
             "function": "count",
-            "field": "name"
+            "field": "name",
         }
 
+    return intent
+
+
+# ---------------------------------------------------------------------
+# GROUP BY NORMALIZATION (NEW)
+# ---------------------------------------------------------------------
+
+def normalize_group_by(intent):
+    if intent.get("action") != "aggregate":
+        intent["group_by"] = []
+        return intent
+
+    gb = intent.get("group_by") or []
+    intent["group_by"] = [g for g in gb if isinstance(g, str)]
     return intent
 
 
@@ -96,30 +89,13 @@ def normalize_aggregate(intent):
 # ---------------------------------------------------------------------
 
 def canonicalize_filters(intent):
-    """
-    Ensure all filters are dicts:
-    {field, op, value}
-    """
     canonical = []
 
     for f in intent.get("filters", []):
-
-        # Already correct
         if isinstance(f, dict):
             canonical.append(f)
-            continue
-
-        # List / tuple form: [field, op, value]
-        if isinstance(f, (list, tuple)) and len(f) == 3:
-            canonical.append({
-                "field": f[0],
-                "op": f[1],
-                "value": f[2],
-            })
-            continue
-
-        # Unknown shape → drop safely
-        continue
+        elif isinstance(f, (list, tuple)) and len(f) == 3:
+            canonical.append({"field": f[0], "op": f[1], "value": f[2]})
 
     intent["filters"] = canonical
     return intent
@@ -130,9 +106,6 @@ def canonicalize_filters(intent):
 # ---------------------------------------------------------------------
 
 def normalize_action(intent):
-    """
-    Map LLM-style actions to canonical actions
-    """
     action_map = {
         "search": "list",
         "find": "list",
@@ -146,9 +119,8 @@ def normalize_action(intent):
         "avg": "aggregate",
     }
 
-    action = intent.get("action")
-    if action in action_map:
-        intent["action"] = action_map[action]
+    if intent.get("action") in action_map:
+        intent["action"] = action_map[intent["action"]]
 
     return intent
 
@@ -158,9 +130,6 @@ def normalize_action(intent):
 # ---------------------------------------------------------------------
 
 def normalize_operators(intent):
-    """
-    Normalize LLM-style operators to canonical operators
-    """
     op_map = {
         "like": "=",
         "equals": "=",
@@ -170,18 +139,8 @@ def normalize_operators(intent):
         "not like": "!=",
     }
 
-    normalized = []
-
     for f in intent.get("filters", []):
-        if not isinstance(f, dict):
-            normalized.append(f)
-            continue
+        if isinstance(f, dict) and f.get("op") in op_map:
+            f["op"] = op_map[f["op"]]
 
-        op = f.get("op")
-        if op in op_map:
-            f["op"] = op_map[op]
-
-        normalized.append(f)
-
-    intent["filters"] = normalized
     return intent
